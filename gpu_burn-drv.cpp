@@ -272,7 +272,7 @@ int initCuda() {
 	return deviceCount;
 }
 
-template<class T> void startBurn(int index, int writeFd, T *A, T *B, bool doubles) {
+template<class T> void startBurn(int index, T *A, T *B, bool doubles) {
 	GPU_Test<T> *our;
 	try {
 		our = new GPU_Test<T>(index, doubles);
@@ -292,16 +292,12 @@ template<class T> void startBurn(int index, int writeFd, T *A, T *B, bool double
 			/*errors += our->getErrors();
 			iters++;*/
 			int ops = our->getIters();
-			write(writeFd, &ops, sizeof(int));
 			ops = our->getErrors();
-			write(writeFd, &ops, sizeof(int));
 		}
 	} catch (std::string e) {
 		fprintf(stderr, "Failure during compute: %s\n", e.c_str());
 		int ops = -1;
 		// Signalling that we failed
-		write(writeFd, &ops, sizeof(int));
-		write(writeFd, &ops, sizeof(int));
 		exit(111);
 	}
 }
@@ -492,9 +488,8 @@ void listenClients(std::vector<int> clientFd, std::vector<pid_t> clientPid, int 
 		printf("\tGPU %d: %s\n", (int)i, clientFaulty.at(i) ? "FAULTY" : "OK");
 }
 
-template<class T> void launch(int runLength, bool useDoubles) {
-	system("nvidia-smi -L");
-
+template<class T> void launch(int devIndex, bool useDoubles) {
+	// system("nvidia-smi -L");
 	// Initting A and B with random data
 	T *A = (T*) malloc(sizeof(T)*SIZE*SIZE);
 	T *B = (T*) malloc(sizeof(T)*SIZE*SIZE);
@@ -503,88 +498,24 @@ template<class T> void launch(int runLength, bool useDoubles) {
 		A[i] = (T)((double)(rand()%1000000)/100000.0);
 		B[i] = (T)((double)(rand()%1000000)/100000.0);
 	}
+	int devCount = initCuda();
 
-	// Forking a process..  This one checks the number of devices to use,
-	// returns the value, and continues to use the first one.
-	int mainPipe[2];
-	pipe(mainPipe);
-	int readMain = mainPipe[0];
-	std::vector<int> clientPipes;
-	std::vector<pid_t> clientPids;
-	clientPipes.push_back(readMain);
-
-	pid_t myPid = fork();
-	if (!myPid) {
-		// Child
-		close(mainPipe[0]);
-		int writeFd = mainPipe[1];
-		int devCount = initCuda();
-		write(writeFd, &devCount, sizeof(int));
-
-		startBurn<T>(0, writeFd, A, B, useDoubles);
-
-		close(writeFd);
-		return;
-	} else {
-		clientPids.push_back(myPid);
-
-		close(mainPipe[1]);
-		int devCount;
-	    read(readMain, &devCount, sizeof(int));
-
-		if (!devCount) {
-			fprintf(stderr, "No CUDA devices\n");
-		} else {
-
-			for (int i = 1; i < devCount; ++i) {
-				int slavePipe[2];
-				pipe(slavePipe);
-				clientPipes.push_back(slavePipe[0]);
-
-				pid_t slavePid = fork();
-
-				if (!slavePid) {
-					// Child
-					close(slavePipe[0]);
-					initCuda();
-					startBurn<T>(i, slavePipe[1], A, B, useDoubles);
-
-					close(slavePipe[1]);
-					return;
-				} else {
-					clientPids.push_back(slavePid);
-					close(slavePipe[1]);
-				}
-			}
-
-			listenClients(clientPipes, clientPids, runLength);
-		}
-	}
-
-	for (size_t i = 0; i < clientPipes.size(); ++i)
-		close(clientPipes.at(i));
-
+	startBurn<T>(devIndex, A, B, useDoubles);
 	free(A);
 	free(B);
 }
 
 int main(int argc, char **argv) {
-	int runLength = 10;
 	bool useDoubles = false;
 	int thisParam = 0;
-	if (argc >= 2 && std::string(argv[1]) == "-d") {
-			useDoubles = true;
-			thisParam++;
-		}
-	if (argc-thisParam < 2)
-		printf("Run length not specified in the command line.  Burning for 10 secs\n");
-	else
-		runLength = atoi(argv[1+thisParam]);
+	int devIndex = 0;
 
-	if (useDoubles)
-		launch<double>(runLength, useDoubles);
-	else
-		launch<float>(runLength, useDoubles);
+	if (argc >= 2 && std::string(argv[1]) == "-i") {
+		thisParam++;
+		devIndex = atoi(argv[1+thisParam]);
+	}
 
+	printf("Burning device %d\n", devIndex);
+	launch<float>(devIndex, useDoubles);
 	return 0;
 }
