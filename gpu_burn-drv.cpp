@@ -500,7 +500,9 @@ template<class T> void launch(int devIndex, bool useDoubles) {
 	}
 	int devCount = initCuda();
 
-	startBurn<T>(devIndex, A, B, useDoubles);
+	if(devIndex < devCount) {
+		startBurn<T>(devIndex, A, B, useDoubles);
+	}
 	free(A);
 	free(B);
 }
